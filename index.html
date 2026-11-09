@@ -1,0 +1,1436 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>デジタル窓</title>
+<style>
+  :root {
+    --font-gothic: system-ui, -apple-system, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Meiryo", sans-serif;
+    --font-mincho: "Hiragino Mincho ProN", "Yu Mincho", "YuMincho", "MS PMincho", serif;
+    --font-rounded: ui-rounded, "Hiragino Maru Gothic ProN", "Arial Rounded MT Bold", "Yu Gothic UI", "Meiryo", sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "Consolas", "Menlo", "Courier New", monospace;
+    --accent: #ffcc66;
+    --scene-rgb: 58, 143, 209;
+    --scene-light-rgb: 200, 225, 245;
+  }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
+  body { font-family: var(--font-gothic); color: #fff; }
+  [hidden] { display: none !important; }
+  :focus-visible { outline: 2px solid #7cc4ff; outline-offset: 2px; }
+
+  /* ---------- 映像（全面・額縁なし） ---------- */
+  #stage {
+    position: fixed; inset: 0; overflow: hidden;
+    /* ダミー ID や読み込み前でも時計を確認できる下地 */
+    background:
+      radial-gradient(120% 90% at 25% 15%, rgba(var(--scene-rgb), .95) 0%, rgba(var(--scene-rgb), .35) 45%, transparent 75%),
+      linear-gradient(180deg, rgba(var(--scene-rgb), .55), #07090d);
+  }
+  #stage iframe {
+    /* cover 相当：16:9 を保ったまま画面を覆い、はみ出しは #stage でクリップ */
+    position: absolute; top: 50%; left: 50%;
+    width: max(100vw, 177.7778vh); height: max(100vh, 56.25vw);
+    transform: translate(-50%, -50%);
+    border: 0; pointer-events: none;
+  }
+
+  /* ---------- 時計：共通構造 ---------- */
+  .clock {
+    --clock-base: 16px;
+    --clock-scale: 1;
+    --clock-fg: #fff;
+    --clock-sub: rgba(255, 255, 255, .82);
+    --clock-bg: rgba(0, 0, 0, .28);
+    --clock-line: rgba(255, 255, 255, .4);
+    --clock-glow: rgba(255, 255, 255, .55);
+    --clock-sec: #ff6a55;
+    --clock-shadow: 0 1px 2px rgba(0, 0, 0, .55), 0 0 12px rgba(0, 0, 0, .35);
+    --clock-blur: none;
+    --clock-font: var(--font-gothic);
+    --align: flex-start;
+    --text-align: left;
+    position: fixed; z-index: 10;
+    display: flex; flex-direction: column; align-items: var(--align);
+    gap: .9em;
+    font-size: calc(var(--clock-base) * var(--clock-scale));
+    font-family: var(--clock-font);
+    color: var(--clock-fg);
+    text-shadow: var(--clock-shadow);
+    text-align: var(--text-align);
+    line-height: 1.15;
+    pointer-events: none;
+    box-sizing: border-box;
+  }
+  .clock.is-empty { display: none !important; }
+  .clock-item {
+    --clock-item-scale: 1;
+    --k: 1; /* 形ごとの副時計の縮小率（主・単独時は 1） */
+    display: flex; flex-direction: column; align-items: var(--align);
+    font-size: calc(var(--clock-base) * var(--clock-scale) * var(--clock-item-scale) * var(--k));
+    box-sizing: border-box;
+  }
+  .ci-head { display: flex; gap: .5em; align-items: baseline; font-size: .8em; color: var(--clock-sub); letter-spacing: .04em; white-space: nowrap; }
+  .ci-place { font-weight: 600; overflow: hidden; text-overflow: ellipsis; max-width: 16em; }
+  .ci-time { font-size: 3em; font-weight: 300; line-height: 1; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .ci-sec { font-size: .55em; margin-left: .08em; color: var(--clock-sub); }
+  .ci-meta { display: flex; gap: .5em; font-size: .85em; color: var(--clock-sub); margin-top: .15em; white-space: nowrap; }
+  .clock-weather { font-size: .75em; color: var(--clock-sub); white-space: nowrap; }
+
+  .analog { display: none; width: 8em; height: 8em; margin-bottom: .3em; filter: drop-shadow(0 1px 3px rgba(0, 0, 0, .45)); }
+  .analog .face { fill: var(--clock-bg); stroke: var(--clock-fg); stroke-width: 1.5; }
+  .analog .ticks line { stroke: var(--clock-fg); stroke-width: 1.6; stroke-linecap: round; }
+  .analog .hand { stroke: var(--clock-fg); stroke-linecap: round; }
+  .analog .hand-h { stroke-width: 3.4; }
+  .analog .hand-m { stroke-width: 2.2; }
+  .analog .hand-s { stroke: var(--clock-sec); stroke-width: 1; }
+  .analog .pin { fill: var(--clock-fg); }
+
+  /* 表示項目の ON/OFF */
+  .no-sec .ci-sec, .no-sec .hand-s,
+  .no-date .ci-date, .no-dow .ci-dow,
+  .no-place .ci-place, .no-diff .ci-diff,
+  .no-meta .ci-meta { display: none; }
+
+  /* ---------- 配置 ---------- */
+  .clock.pos-tl { top: 28px; left: 32px; }
+  .clock.pos-tr { top: 28px; right: 32px; --align: flex-end; --text-align: right; }
+  .clock.pos-bl { bottom: 28px; left: 32px; }
+  .clock.pos-br { bottom: 28px; right: 32px; --align: flex-end; --text-align: right; }
+  .clock.pos-bc { bottom: 28px; left: 50%; transform: translateX(-50%); --align: center; --text-align: center; }
+
+  /* ---------- 全体サイズ・フォント ---------- */
+  .clock.size-s { --clock-scale: .8; }
+  .clock.size-m { --clock-scale: 1; }
+  .clock.size-l { --clock-scale: 1.35; }
+  .clock.font-gothic { --clock-font: var(--font-gothic); }
+  .clock.font-mincho { --clock-font: var(--font-mincho); }
+  .clock.font-rounded { --clock-font: var(--font-rounded); }
+  .clock.font-mono { --clock-font: var(--font-mono); }
+
+  /* ---------- 色テーマ（形とは独立。変数だけを切り替える） ---------- */
+  .clock.theme-white { --clock-bg: rgba(0, 0, 0, .28); }
+  .clock.theme-black {
+    --clock-fg: #111; --clock-sub: rgba(20, 20, 20, .78);
+    --clock-bg: rgba(255, 255, 255, .62); --clock-line: rgba(0, 0, 0, .25);
+    --clock-glow: rgba(255, 255, 255, .8);
+    --clock-shadow: 0 0 2px rgba(255, 255, 255, .9), 0 0 10px rgba(255, 255, 255, .6);
+  }
+  .clock.theme-glass {
+    --clock-bg: rgba(255, 255, 255, .16); --clock-line: rgba(255, 255, 255, .45);
+    --clock-blur: blur(14px) saturate(1.3);
+  }
+  .clock.theme-darkglass {
+    --clock-fg: #f4f4f6; --clock-bg: rgba(12, 14, 20, .5);
+    --clock-blur: blur(14px);
+  }
+  .clock.theme-accent {
+    --clock-fg: var(--accent); --clock-sub: var(--accent);
+    --clock-bg: rgba(0, 0, 0, .42); --clock-line: var(--accent);
+    --clock-glow: var(--accent); --clock-sec: var(--accent);
+    --clock-shadow: 0 1px 2px rgba(0, 0, 0, .7), 0 0 12px rgba(0, 0, 0, .45);
+  }
+  .clock.theme-scene {
+    --clock-fg: rgb(var(--scene-light-rgb)); --clock-sub: rgba(var(--scene-light-rgb), .85);
+    --clock-bg: rgba(var(--scene-rgb), .45); --clock-line: rgba(var(--scene-light-rgb), .5);
+    --clock-glow: rgb(var(--scene-rgb)); --clock-sec: rgb(var(--scene-light-rgb));
+    --clock-shadow: 0 1px 3px rgba(0, 0, 0, .65), 0 0 14px rgba(var(--scene-rgb), .8);
+  }
+  .clock.theme-neon {
+    --clock-fg: #9ffcff; --clock-sub: #ff9df0;
+    --clock-bg: rgba(8, 6, 24, .5); --clock-line: rgba(255, 125, 233, .6);
+    --clock-glow: #00e5ff; --clock-sec: #ff7de9;
+    --clock-shadow: 0 1px 2px rgba(0, 0, 0, .6), 0 0 .15em #00e5ff, 0 0 .5em #00e5ff, 0 0 1em rgba(0, 229, 255, .6);
+  }
+
+  /* ---------- 形（10 種） ---------- */
+  /* 背景パネルを持つ形 */
+  .clock.clock-style-2, .clock.clock-style-3, .clock.clock-style-4,
+  .clock.clock-style-8, .clock.clock-style-9, .clock.clock-style-10,
+  .clock.clock-style-7 .clock-item {
+    background: var(--clock-bg);
+    -webkit-backdrop-filter: var(--clock-blur);
+    backdrop-filter: var(--clock-blur);
+  }
+  /* 横並びで 1 行にまとめる形 */
+  .clock.clock-style-2 .clock-item, .clock.clock-style-3 .clock-item, .clock.clock-style-8 .clock-item {
+    flex-direction: row; align-items: baseline; gap: .1em .45em; flex-wrap: wrap;
+  }
+  /* 狭い画面では画面内に収め、入りきらない分は折り返す */
+  .clock.clock-style-2, .clock.clock-style-3 { max-width: calc(100vw - 64px); flex-wrap: wrap; }
+  .clock.clock-style-8 { max-width: 100vw; flex-wrap: wrap; }
+  .clock.clock-style-2 .ci-meta, .clock.clock-style-3 .ci-meta, .clock.clock-style-8 .ci-meta { margin-top: 0; }
+  /* 区切り線は「両方表示」のときだけ */
+  .clock.clock-style-2.has-both .clock-item + .clock-item,
+  .clock.clock-style-4.has-both .clock-item + .clock-item,
+  .clock.clock-style-8.has-both .clock-item + .clock-item {
+    border-left: 1px solid var(--clock-line); padding-left: 1em;
+  }
+  .clock.clock-style-3.has-both .clock-item + .clock-item,
+  .clock.clock-style-9.has-both .clock-item + .clock-item {
+    border-top: 1px solid var(--clock-line); padding-top: .45em;
+  }
+
+  /* 1. テキストのみ */
+  .clock.clock-style-1 { gap: 1.1em; }
+  .clock.clock-style-1 .ci-time { font-size: 3.2em; font-weight: 200; }
+
+  /* 2. ピル */
+  .clock.clock-style-2 { flex-direction: row; align-items: center; gap: 1em; padding: .55em 1.4em; border-radius: 2em; /* 1 行ならピル形、折り返し時も角が文字を削らない */ }
+  .clock.clock-style-2 .ci-time { font-size: 1.7em; font-weight: 500; }
+
+  /* 3. グラスパネル（2 行） */
+  .clock.clock-style-3 {
+    --clock-blur: blur(16px) saturate(1.3);
+    gap: .45em; padding: .9em 1.3em; border-radius: 18px;
+    border: 1px solid rgba(255, 255, 255, .18);
+  }
+  .clock.clock-style-3 .ci-time { font-size: 2.2em; font-weight: 400; }
+
+  /* 4. 2 カラム分割 */
+  .clock.clock-style-4 {
+    --align: center; --text-align: center;
+    flex-direction: row; align-items: stretch; gap: 1em;
+    padding: .8em 1.3em; border-radius: 12px;
+  }
+  .clock.clock-style-4 .clock-item { justify-content: center; }
+  .clock.clock-style-4 .ci-time { font-size: 2.4em; }
+
+  /* 5. 大＋小スタック */
+  .clock.clock-style-5 { gap: .35em; }
+  .clock.clock-style-5 .clock-item:not(.is-primary) { --k: .5; }
+  .clock.clock-style-5 .ci-time { font-size: 3.6em; font-weight: 200; }
+
+  /* 6. アナログ */
+  .clock.clock-style-6 { gap: .6em; }
+  .clock.clock-style-6 .is-analog .analog { display: block; }
+  .clock.clock-style-6 .is-analog .ci-time { display: none; }
+  .clock.clock-style-6 .clock-item:not(.is-analog) { --k: .6; }
+  .clock.clock-style-6 .clock-item:not(.is-analog) .ci-time { font-size: 2.4em; }
+
+  /* 7. サークルバッジ */
+  .clock.clock-style-7 { --align: center; flex-direction: row; align-items: center; gap: .8em; text-align: center; }
+  .clock.clock-style-7 .clock-item {
+    width: 8.5em; height: 8.5em; border-radius: 50%;
+    justify-content: center; padding: .6em; overflow: hidden;
+  }
+  .clock.clock-style-7 .ci-head { font-size: .68em; flex-wrap: wrap; justify-content: center; max-width: 100%; }
+  .clock.clock-style-7 .ci-place { max-width: 8em; }
+  .clock.clock-style-7 .ci-time { font-size: 2em; font-weight: 500; margin: .1em 0; }
+  .clock.clock-style-7 .ci-meta { font-size: .68em; }
+
+  /* 8. ボトムバー（配置にかかわらず下端に幅いっぱい） */
+  .clock.clock-style-8 {
+    --align: center; --text-align: center;
+    top: auto; left: 0; right: 0; bottom: 0; transform: none;
+    flex-direction: row; justify-content: center; align-items: center;
+    gap: 1.6em; padding: .35em 1.5em;
+  }
+  .clock.clock-style-8 .ci-time { font-size: 1.3em; font-weight: 500; }
+
+  /* 9. コーナータブ（隅に張り付く。下中央は JS で左下に寄せる） */
+  .clock.clock-style-9 { gap: .45em; padding: .6em 1.1em; }
+  .clock.clock-style-9.pos-tl { top: 0; left: 0; border-radius: 0 0 14px 0; }
+  .clock.clock-style-9.pos-tr { top: 0; right: 0; border-radius: 0 0 0 14px; }
+  .clock.clock-style-9.pos-bl { bottom: 0; left: 0; border-radius: 0 14px 0 0; }
+  .clock.clock-style-9.pos-br { bottom: 0; right: 0; border-radius: 14px 0 0 0; }
+  .clock.clock-style-9 .ci-time { font-size: 1.9em; font-weight: 400; }
+
+  /* 10. デジタル 7 セグ風 */
+  .clock.clock-style-10 { --clock-font: var(--font-mono); gap: .5em; padding: .7em 1.2em; border-radius: 6px; }
+  .clock.clock-style-10 .ci-time {
+    display: inline-block; transform: skewX(-6deg);
+    font-size: 2.6em; font-weight: 700; letter-spacing: .06em;
+    text-shadow: 0 0 .12em var(--clock-glow), 0 0 .45em var(--clock-glow), 0 1px 2px rgba(0, 0, 0, .5);
+  }
+
+  /* ---------- 設定ボタン・パネル ---------- */
+  #settings-btn {
+    position: fixed; right: 14px; top: 50%; transform: translateY(-50%); z-index: 25;
+    width: 44px; height: 44px; border-radius: 50%; border: none;
+    background: rgba(0, 0, 0, .45); color: #fff; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    opacity: .5; transition: opacity .2s;
+  }
+  #settings-btn:hover, #settings-btn:focus-visible { opacity: 1; }
+
+  #panel {
+    position: fixed; top: 12px; right: 12px; bottom: 12px; z-index: 30;
+    width: 360px; max-width: calc(100vw - 24px); box-sizing: border-box;
+    overflow-y: auto; padding: 12px 16px 20px;
+    background: rgba(16, 18, 24, .74);
+    -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);
+    color: #eef0f4; border-radius: 14px; font-size: 14px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, .4);
+    color-scheme: dark;
+  }
+  #panel.side-left { right: auto; left: 12px; }
+  .panel-header { display: flex; align-items: center; justify-content: space-between; }
+  .panel-header h1 { font-size: 16px; margin: 4px 0; font-weight: 600; }
+  #panel h2 { font-size: 12px; letter-spacing: .08em; color: #9fb0c8; margin: 18px 0 6px; border-bottom: 1px solid rgba(255, 255, 255, .12); padding-bottom: 4px; }
+  .field { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 7px 0; }
+  .field label { flex: 1; }
+  #panel select, #panel input[type="color"] {
+    background: rgba(255, 255, 255, .1); color: inherit; font: inherit;
+    border: 1px solid rgba(255, 255, 255, .22); border-radius: 6px; padding: 4px 6px;
+  }
+  #panel input[type="color"] { width: 48px; height: 28px; padding: 2px; }
+  #panel input[type="checkbox"] { width: 18px; height: 18px; accent-color: #7cc4ff; }
+  .range-wrap { display: flex; align-items: center; gap: 8px; }
+  .range-wrap input { width: 140px; accent-color: #7cc4ff; }
+  .range-wrap output { min-width: 3.4em; text-align: right; font-variant-numeric: tabular-nums; }
+  .hint { font-size: 12px; color: #b4bccb; margin: 2px 0 8px; line-height: 1.5; }
+  .status { font-size: 12px; color: #c9d2e0; margin: 6px 0; line-height: 1.5; }
+  .btn {
+    background: rgba(255, 255, 255, .1); color: inherit; font: inherit;
+    border: 1px solid rgba(255, 255, 255, .18); border-radius: 6px;
+    padding: 5px 10px; cursor: pointer;
+  }
+  .btn:hover { background: rgba(255, 255, 255, .2); }
+  .btn-danger { border-color: rgba(255, 120, 120, .5); color: #ffb4b4; }
+  .btn-icon { width: 32px; height: 32px; padding: 0; font-size: 18px; line-height: 1; }
+  .btn-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+  .scene-list { list-style: none; margin: 6px 0; padding: 0; max-height: 240px; overflow-y: auto; }
+  .scene-list li { display: flex; gap: 4px; margin: 3px 0; }
+  .scene-pick { flex: 1; text-align: left; display: flex; flex-direction: column; gap: 1px; }
+  .scene-pick small { color: #a9b3c4; font-size: 11px; }
+  .scene-pick[aria-current="true"] { background: rgba(124, 196, 255, .25); border-color: rgba(124, 196, 255, .6); }
+  .fav-btn { width: 36px; font-size: 16px; color: #ffd76a; }
+
+  /* file:// 等で埋め込みが再生されない場合の案内（目立たない隅） */
+  #notice {
+    position: fixed; top: 14px; right: 14px; z-index: 20;
+    max-width: 300px; font-size: 12px; line-height: 1.5;
+    background: rgba(0, 0, 0, .55); color: #e8e8e8;
+    padding: 8px 34px 8px 12px; border-radius: 8px;
+  }
+  #notice.side-left { right: auto; left: 14px; }
+
+  /* 自動切替の知らせ（数秒で消える）と、再生できる景色がないときの小さな表示 */
+  #toast {
+    position: fixed; top: 14px; left: 50%; transform: translateX(-50%); z-index: 22;
+    max-width: min(90vw, 520px); font-size: 12px; line-height: 1.5; text-align: center;
+    background: rgba(0, 0, 0, .55); color: #e8e8e8;
+    padding: 6px 14px; border-radius: 8px; pointer-events: none;
+  }
+  #stage-msg {
+    position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 5;
+    font-size: 13px; color: rgba(255, 255, 255, .72); text-shadow: 0 1px 3px rgba(0, 0, 0, .6);
+    pointer-events: none;
+  }
+  .scene-pick .unavailable { color: #ffb4a0; }
+  #notice code { font-family: var(--font-mono); background: rgba(255, 255, 255, .12); padding: 0 3px; border-radius: 3px; }
+  #notice-close {
+    position: absolute; top: 4px; right: 4px; width: 24px; height: 24px;
+    background: transparent; border: none; color: #ddd; font-size: 16px; cursor: pointer; border-radius: 4px;
+  }
+</style>
+</head>
+<body>
+  <div id="stage" aria-hidden="true"></div>
+  <div id="stage-msg" hidden>再生できる景色がありません</div>
+  <div id="toast" role="status" aria-live="polite" hidden></div>
+
+  <div id="clock" class="clock" role="group" aria-label="時計">
+    <div class="clock-weather" id="weather">天気：準備中</div>
+  </div>
+
+  <button id="settings-btn" type="button" aria-label="設定を開く" aria-expanded="false" aria-controls="panel">
+    <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+      <line x1="4" y1="6" x2="20" y2="6"/><circle cx="9" cy="6" r="2.2" fill="currentColor"/>
+      <line x1="4" y1="12" x2="20" y2="12"/><circle cx="15" cy="12" r="2.2" fill="currentColor"/>
+      <line x1="4" y1="18" x2="20" y2="18"/><circle cx="8" cy="18" r="2.2" fill="currentColor"/>
+    </svg>
+  </button>
+
+  <aside id="panel" role="dialog" aria-modal="false" aria-labelledby="panel-title" hidden>
+    <div class="panel-header">
+      <h1 id="panel-title">設定</h1>
+      <button id="panel-close" class="btn btn-icon" type="button" aria-label="設定を閉じる">×</button>
+    </div>
+    <div id="panel-body"></div>
+  </aside>
+
+  <div id="notice" role="note" hidden>
+    埋め込み映像が再生されない場合は、http://localhost などのローカルサーバー経由で開くと解決する場合があります（例：<code>python -m http.server</code>）。
+    <button id="notice-close" type="button" aria-label="案内を閉じる">×</button>
+  </div>
+
+<script>
+'use strict';
+
+// ===== 1. 定数・景色データ・設定の既定値 =====
+
+/*
+ * 景色データ（ここを差し替える）
+ * 出典：portofcams26.pages.dev・japanlivecamera.pages.dev・openwebcamdb に掲載の動画 ID を、
+ *       YouTube の oEmbed で「埋め込み可能」と照合したもの。今も配信中かどうかは未確認なので、定期的に見直すこと。
+ *       配信が終わった・再生できない景色は、設定「配信が終わったら自動で切り替える」が ON なら自動で次へ進む。
+ * 差し替え・追加の手順：
+ *   1. YouTube で、埋め込みが許可されているライブ配信を開く
+ *   2. URL「https://www.youtube.com/watch?v=XXXXXXXXXXX」の「v=」の後ろの 11 文字をコピーする
+ *   3. 同じカテゴリの並びに 1 行追加（または videoId を置き換え）し、timeZone をカメラ所在地の IANA タイムゾーン名に合わせる
+ * チャンネルの「現在のライブ配信」を映したい場合（配信ごとに動画 ID が変わるチャンネル向け）：
+ *   videoId を書かず、channelId: 'UCxxxxxxxxxxxxxxxxxxxxxx'（UC で始まる 24 文字）を書く。
+ *   videoId がなく channelId だけある景色は、live_stream?channel= 方式で埋め込む。
+ * 動作確認用のダミーにしたい場合は videoId を "DUMMY" で始まる 11 文字（例："DUMMY000001"）にする。
+ *   ダミーは読み込まず、themeColor のグラデーション背景だけを表示し、自動切替の判定の対象外になる。
+ * name / themeColor は自由に変更可。category は「海」「山」「街」「動物」のいずれか（カテゴリごとにまとめて並べる）。
+ * お気に入りは videoId（ない場合は channelId）で記録しているため、差し替えるとその景色のお気に入りは外れます（再登録してください）。
+ */
+const SCENES = [
+  // 海
+  { name: 'バンザイ・パイプライン',   videoId: 'Fp7l8XASb9Y', category: '海',   timeZone: 'Pacific/Honolulu',    themeColor: '#1fb5c9' },
+  { name: 'マウイ島のクジラの海',     videoId: 'QzQ-7eiMw1w', category: '海',   timeZone: 'Pacific/Honolulu',    themeColor: '#2d9cdb' },
+  { name: 'モントレー湾',             videoId: 'fVa6-zCBR7A', category: '海',   timeZone: 'America/Los_Angeles', themeColor: '#3a8fd1' },
+  { name: '江の島',                   videoId: 'ywXRfMLuw78', category: '海',   timeZone: 'Asia/Tokyo',          themeColor: '#3a8fd1' },
+  { name: '名護のかりゆしビーチ',     videoId: 'AhQErfreEOE', category: '海',   timeZone: 'Asia/Tokyo',          themeColor: '#1fb5c9' },
+  { name: '備瀬の海と伊江島',         videoId: 'VyT694OcIHM', category: '海',   timeZone: 'Asia/Tokyo',          themeColor: '#2d9cdb' },
+  { name: '宮古島',                   videoId: '4v5e4eKIT_E', category: '海',   timeZone: 'Asia/Tokyo',          themeColor: '#1fb5c9' },
+  // 山
+  { name: '富士山（河口湖）',         videoId: 'Sv9hcJ3k5h4', category: '山',   timeZone: 'Asia/Tokyo',          themeColor: '#8a9bb5' },
+  { name: 'キラウエア火山',           videoId: 'HggWKlZv9yk', category: '山',   timeZone: 'Pacific/Honolulu',    themeColor: '#c0562f' },
+  { name: 'グランドティトン',         videoId: 'o4fKtgPVpoU', category: '山',   timeZone: 'America/Denver',      themeColor: '#6b8e5a' },
+  { name: 'イエローストーン川',       videoId: 'IvZ22jZgvOI', category: '山',   timeZone: 'America/Denver',      themeColor: '#557a5e' },
+  { name: 'レ・カレリ（アルプス）',   videoId: 'vVdepOnLGWg', category: '山',   timeZone: 'Europe/Paris',        themeColor: '#7aa5c9' },
+  { name: 'レ・ザルク（モンブラン）', videoId: 'y2uYBuswh7w', category: '山',   timeZone: 'Europe/Paris',        themeColor: '#8a9bb5' },
+  { name: 'レヴィ（フィンランド）',   videoId: 'LwihxyJ4V20', category: '山',   timeZone: 'Europe/Helsinki',     themeColor: '#7aa5c9' },
+  // 街
+  { name: 'シドニー・ハーバー',       videoId: '5uZa3-RMFos', category: '街',   timeZone: 'Australia/Sydney',    themeColor: '#2d9cdb' },
+  { name: 'ヴェネツィア大運河',       videoId: 'r8N6IsoIkTk', category: '街',   timeZone: 'Europe/Rome',         themeColor: '#d9a23a' },
+  { name: 'プラハ',                   videoId: 'kvYMIaXclIE', category: '街',   timeZone: 'Europe/Prague',       themeColor: '#8c7b6b' },
+  { name: '渋谷スクランブル交差点',   videoId: '5B4LmH4JbnY', category: '街',   timeZone: 'Asia/Tokyo',          themeColor: '#e07a3a' },
+  // 動物
+  { name: 'テンベ象の水場',           videoId: '0P_LBKqVbfs', category: '動物', timeZone: 'Africa/Johannesburg', themeColor: '#c99a4a' },
+  { name: 'ブルックス滝のクマ',       videoId: 'J7ZrIDvqlic', category: '動物', timeZone: 'America/Anchorage',   themeColor: '#557a5e' },
+  { name: 'ラッコ',                   videoId: 'abbR-Ttd-cA', category: '動物', timeZone: 'America/Los_Angeles', themeColor: '#5fa8a0' },
+  { name: 'アフリカの水場',           videoId: 'qpukdDslCjk', category: '動物', timeZone: 'Africa/Johannesburg', themeColor: '#c99a4a' }
+];
+
+const CATEGORIES = ['海', '山', '街', '動物'];
+const STYLE_NAMES = ['テキストのみ', 'ピル', 'グラスパネル', '2カラム分割', '大＋小スタック', 'アナログ', 'サークルバッジ', 'ボトムバー', 'コーナータブ', 'デジタル7セグ風'];
+const THEMES = [['white', 'ホワイト'], ['black', 'ブラック'], ['glass', 'グラス'], ['darkglass', 'ダークグラス'], ['accent', 'アクセント'], ['scene', '景色連動'], ['neon', 'ネオン']];
+const POSITIONS = [['tl', '左上'], ['tr', '右上'], ['bl', '左下'], ['br', '右下'], ['bc', '下中央']];
+const SIZES = [['s', '小'], ['m', '中'], ['l', '大']];
+const FONTS = [['gothic', 'ゴシック'], ['mincho', '明朝'], ['rounded', '丸ゴシック'], ['mono', '等幅・デジタル風']];
+const STORAGE_KEY = 'digital-window:v1';
+const AUTO_INTERVAL_MS = 10 * 60 * 1000;
+// 配信終了・再生不可の判定（目安の時間）
+const PLAY_TIMEOUT_MS = 20 * 1000;        // 読み込みからこの時間 PLAYING にならなければ、再生を 1 回促して様子を見る
+const PLAY_GRACE_MS = 10 * 1000;          // 再生を促したあとの猶予。それでも始まらなければ配信前・オフラインの疑い
+const BUFFER_TIMEOUT_MS = 30 * 1000;      // 再生開始後、BUFFERING がこの時間続いたら止まったとみなす（弱い証拠）
+const MAX_WEAK_SKIPS = 3;                 // PLAYING を見ないまま弱い証拠で連続して飛ばすのはこの回数まで
+const RETRY_AFTER_MS = 30 * 60 * 1000;    // 利用不可とした景色を自動切替の候補に戻すまでの時間
+const STOP_RETRY_MS = 5 * 60 * 1000;      // 全部利用不可で停止したあと、再挑戦するまでの時間
+const API_LOAD_TIMEOUT_MS = 15 * 1000;    // IFrame Player API の読み込み待ち。超えたら通常の埋め込みのまま使う
+const TOAST_MS = 5000;
+const JST = 'Asia/Tokyo';
+
+const DEFAULTS = {
+  sceneIndex: 0,
+  category: 'all',
+  favOnly: false,
+  favorites: [],
+  autoRotate: false,
+  autoSkip: true,
+  clockStyle: 3,
+  theme: 'darkglass',
+  accent: '#ffcc66',
+  position: 'bl',
+  size: 'm',
+  font: 'gothic',
+  showLocal: true,
+  showJst: true,
+  localScale: 100,
+  jstScale: 100,
+  primary: 'local',
+  showSec: true,
+  showDate: true,
+  showDow: true,
+  showPlace: true,
+  showDiff: true,
+  showWeather: false,
+  fileNoticeDismissed: false
+};
+
+const keysOf = list => list.map(item => item[0]);
+const isBool = v => typeof v === 'boolean';
+const oneOf = list => v => list.includes(v);
+const isScale = v => typeof v === 'number' && Number.isFinite(v) && v >= 50 && v <= 200;
+
+// キーごとの妥当性チェック。通らない値は既定値に戻す
+const VALIDATORS = {
+  sceneIndex: v => Number.isInteger(v) && v >= 0 && v < SCENES.length,
+  category: oneOf(['all'].concat(CATEGORIES)),
+  favOnly: isBool,
+  favorites: v => Array.isArray(v),
+  autoRotate: isBool,
+  autoSkip: isBool,
+  clockStyle: v => Number.isInteger(v) && v >= 1 && v <= 10,
+  theme: oneOf(keysOf(THEMES)),
+  accent: v => typeof v === 'string' && /^#[0-9a-fA-F]{6}$/.test(v),
+  position: oneOf(keysOf(POSITIONS)),
+  size: oneOf(keysOf(SIZES)),
+  font: oneOf(keysOf(FONTS)),
+  showLocal: isBool,
+  showJst: isBool,
+  localScale: isScale,
+  jstScale: isScale,
+  primary: oneOf(['local', 'jst']),
+  showSec: isBool,
+  showDate: isBool,
+  showDow: isBool,
+  showPlace: isBool,
+  showDiff: isBool,
+  showWeather: isBool,
+  fileNoticeDismissed: isBool
+};
+
+// お気に入り・利用不可の記録に使うキー（videoId がなければ channelId）
+function sceneKey(scene) {
+  return scene.videoId || scene.channelId || scene.name;
+}
+
+function sanitize(raw) {
+  const src = (raw && typeof raw === 'object' && !Array.isArray(raw)) ? raw : {};
+  const out = {};
+  for (const key of Object.keys(DEFAULTS)) {
+    const v = src[key];
+    out[key] = VALIDATORS[key](v) ? v : JSON.parse(JSON.stringify(DEFAULTS[key]));
+  }
+  out.localScale = Math.round(out.localScale / 10) * 10;
+  out.jstScale = Math.round(out.jstScale / 10) * 10;
+  out.favorites = out.favorites.filter(id => typeof id === 'string' && SCENES.some(s => sceneKey(s) === id));
+  return out;
+}
+
+// ===== 2. 時刻計算（DOM に依存しない） =====
+
+const WEEKDAY_INDEX = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+const DOW_JA = ['日', '月', '火', '水', '木', '金', '土'];
+
+// 景色変更時にだけ作り直す（毎秒 new しない）。不正なタイムゾーンは Asia/Tokyo にフォールバック
+function createFormatter(timeZone) {
+  const opts = {
+    hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'short',
+    hour: '2-digit', minute: '2-digit', second: '2-digit'
+  };
+  try {
+    return { fmt: new Intl.DateTimeFormat('en-US', Object.assign({}, opts, { timeZone: timeZone })), timeZone: timeZone, fallback: false };
+  } catch (e) {
+    return { fmt: new Intl.DateTimeFormat('en-US', Object.assign({}, opts, { timeZone: JST })), timeZone: JST, fallback: true };
+  }
+}
+
+function getParts(fmt, date) {
+  const o = {};
+  for (const p of fmt.formatToParts(date)) o[p.type] = p.value;
+  let hour = Number(o.hour);
+  if (hour === 24) hour = 0; // 一部環境で深夜 0 時が "24" になる対策
+  return {
+    year: Number(o.year), month: Number(o.month), day: Number(o.day),
+    hour: hour, minute: Number(o.minute), second: Number(o.second),
+    dow: WEEKDAY_INDEX[o.weekday] !== undefined ? WEEKDAY_INDEX[o.weekday] : 0
+  };
+}
+
+// 両ゾーンの「壁時計」を UTC として並べ、その差を分で返す（夏時間・30/45 分単位にも対応）
+function diffMinutes(localParts, jstParts) {
+  const toMs = p => Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);
+  return Math.round((toMs(localParts) - toMs(jstParts)) / 60000);
+}
+
+function formatDiff(minutes) {
+  if (minutes === 0) return '±0';
+  const sign = minutes > 0 ? '+' : '-';
+  const abs = Math.abs(minutes);
+  const h = Math.floor(abs / 60);
+  const m = abs % 60;
+  return sign + (h ? h + '時間' : '') + (m ? m + '分' : '');
+}
+
+const pad2 = n => String(n).padStart(2, '0');
+
+// ===== 3. 状態の読み書き =====
+
+function loadState() {
+  let raw = null;
+  try {
+    const text = window.localStorage.getItem(STORAGE_KEY);
+    if (text) raw = JSON.parse(text);
+  } catch (e) {
+    raw = null; // 壊れた JSON や localStorage 不可の環境でも既定値で起動する
+  }
+  return sanitize(raw);
+}
+
+function save() {
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch (e) {
+    // 保存できない環境では、その場の表示だけ反映する
+  }
+}
+
+let state = loadState();
+
+// ===== 4. 時計の DOM（共通構造を 1 つだけ作り、形は CSS クラスで切り替える） =====
+
+const $ = id => document.getElementById(id);
+const clockEl = $('clock');
+const weatherEl = $('weather');
+const stageEl = $('stage');
+
+function analogSvg() {
+  let ticks = '';
+  for (let i = 0; i < 12; i++) {
+    ticks += '<line x1="50" y1="6" x2="50" y2="' + (i % 3 ? 10 : 13) + '" transform="rotate(' + (i * 30) + ' 50 50)"/>';
+  }
+  return '<svg class="analog" viewBox="0 0 100 100" aria-hidden="true">' +
+    '<circle class="face" cx="50" cy="50" r="47"/>' +
+    '<g class="ticks">' + ticks + '</g>' +
+    '<line class="hand hand-h" x1="50" y1="54" x2="50" y2="27"/>' +
+    '<line class="hand hand-m" x1="50" y1="56" x2="50" y2="15"/>' +
+    '<line class="hand hand-s" x1="50" y1="60" x2="50" y2="11"/>' +
+    '<circle class="pin" cx="50" cy="50" r="2.2"/>' +
+    '</svg>';
+}
+
+function buildItem(key, label, withPlace) {
+  const root = document.createElement('div');
+  root.className = 'clock-item ' + key;
+  root.innerHTML =
+    analogSvg() +
+    '<div class="ci-head"><span class="ci-label">' + label + '</span>' +
+    (withPlace ? '<span class="ci-place"></span><span class="ci-diff"></span>' : '') + '</div>' +
+    '<div class="ci-time"><span class="ci-hm">--:--</span><span class="ci-sec">:--</span></div>' +
+    '<div class="ci-meta"><span class="ci-date"></span><span class="ci-dow"></span></div>';
+  const q = sel => root.querySelector(sel);
+  return {
+    root: root, hm: q('.ci-hm'), sec: q('.ci-sec'), date: q('.ci-date'), dow: q('.ci-dow'),
+    place: q('.ci-place'), diff: q('.ci-diff'),
+    handH: q('.hand-h'), handM: q('.hand-m'), handS: q('.hand-s')
+  };
+}
+
+const items = {
+  local: buildItem('local', '現地', true),
+  jst: buildItem('jst', '日本', false)
+};
+clockEl.insertBefore(items.jst.root, weatherEl);
+clockEl.insertBefore(items.local.root, items.jst.root);
+
+let localFormatter = null;
+let localTz = null;
+const jstFormatter = createFormatter(JST);
+
+function paintItem(item, p) {
+  item.hm.textContent = pad2(p.hour) + ':' + pad2(p.minute);
+  item.sec.textContent = ':' + pad2(p.second);
+  item.date.textContent = p.year + '/' + pad2(p.month) + '/' + pad2(p.day);
+  item.dow.textContent = '(' + DOW_JA[p.dow] + ')';
+  // アナログは JS で針の角度だけを更新する
+  item.handH.setAttribute('transform', 'rotate(' + ((p.hour % 12) * 30 + p.minute * 0.5) + ' 50 50)');
+  item.handM.setAttribute('transform', 'rotate(' + (p.minute * 6 + p.second * 0.1) + ' 50 50)');
+  item.handS.setAttribute('transform', 'rotate(' + (p.second * 6) + ' 50 50)');
+}
+
+function tick() {
+  if (!localFormatter) return;
+  const now = new Date();
+  const lp = getParts(localFormatter.fmt, now);
+  const jp = getParts(jstFormatter.fmt, now);
+  paintItem(items.local, lp);
+  paintItem(items.jst, jp);
+  items.local.diff.textContent = formatDiff(diffMinutes(lp, jp));
+}
+
+// setInterval(1000) だと秒表示がずれていくため、毎回次の秒境界に合わせて予約し直す
+function scheduleTick() {
+  tick();
+  setTimeout(scheduleTick, 1000 - (Date.now() % 1000) + 15);
+}
+
+// ===== 5. 映像 =====
+
+function hexToRgb(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
+  if (!m) return [58, 143, 209];
+  const n = parseInt(m[1], 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+function isPlayableId(id) {
+  return /^[A-Za-z0-9_-]{11}$/.test(id) && !/^DUMMY/i.test(id);
+}
+
+// 埋め込み元を決める。videoId があればそれを使い（ダミーなら null）、なければ channelId の live_stream 方式
+function embedSource(scene) {
+  if (scene.videoId) return isPlayableId(scene.videoId) ? { kind: 'video', id: scene.videoId } : null;
+  if (typeof scene.channelId === 'string' && /^UC[A-Za-z0-9_-]{22}$/.test(scene.channelId)) {
+    return { kind: 'channel', id: scene.channelId };
+  }
+  return null;
+}
+
+function isPlayableScene(scene) {
+  return embedSource(scene) !== null;
+}
+
+function embedUrl(src) {
+  let params = 'autoplay=1&mute=1&controls=0&rel=0&playsinline=1&modestbranding=1&enablejsapi=1';
+  // origin は http(s) で開いたときだけ付ける（file:// では意味のある値にならない）
+  if (/^https?:$/.test(window.location.protocol)) {
+    params += '&origin=' + encodeURIComponent(window.location.origin);
+  }
+  return src.kind === 'video'
+    ? 'https://www.youtube.com/embed/' + encodeURIComponent(src.id) + '?' + params
+    : 'https://www.youtube.com/embed/live_stream?channel=' + encodeURIComponent(src.id) + '&' + params;
+}
+
+// --- 再生状態の監視（YouTube IFrame Player API） ---
+// API は再生できる景色を初めて表示したときにだけ読み込む（ダミーだけなら外部通信なし）。
+// 読み込めなかった場合は、作成済みの通常の iframe 埋め込みのまま動かす（判定はしない）。
+// 誤判定で全景色を連鎖して飛ばさないよう、決定的な失敗（onError・ENDED）と
+// 弱い証拠（再生が始まらない・長いバッファリング）を分けて扱う。
+const PS = { UNSTARTED: -1, ENDED: 0, PLAYING: 1, PAUSED: 2, BUFFERING: 3, CUED: 5 };
+let ytApi = 'idle'; // idle → loading → ready / failed
+let apiTimer = null;
+let currentKey = null;
+let currentIframe = null;
+let player = null;
+let loadToken = 0;          // 読み込み・破棄のたびに増やし、古いプレーヤーのイベントやタイマーを無視する
+let readySeen = false;      // onReady を受けたか（受けていなければ判定不能）
+let hasPlayed = false;      // この読み込みで PLAYING を見たか
+let judgeUnknown = false;   // onReady が来ず、再生状態を判定できなかった
+let autoplaySuspected = false;
+let weakSkipStreak = 0;     // PLAYING を見ないまま弱い証拠でスキップした連続回数
+let noPlayable = false;
+let retryTimer = null;
+let toastTimer = null;
+const unavailable = new Map(); // sceneKey → 利用不可と判断した時刻（このセッションだけ。保存しない）
+const AUTOPLAY_MESSAGE = '自動再生がブロックされている可能性があります。画面をクリックするか、ブラウザの自動再生の設定を確認してください';
+
+// 表示中の時間だけを数えるタイマー。非表示になったら止め、表示に戻ったら計り直す
+const watches = new Map(); // name → { ms, fn, id }
+
+function startWatch(name, ms, fn) {
+  stopWatch(name);
+  const w = { ms: ms, fn: fn, id: null };
+  watches.set(name, w);
+  armWatch(name, w);
+}
+
+function armWatch(name, w) {
+  clearTimeout(w.id);
+  w.id = null;
+  if (document.visibilityState === 'hidden') return;
+  w.id = setTimeout(() => {
+    if (watches.get(name) !== w) return;
+    watches.delete(name);
+    w.fn();
+  }, w.ms);
+}
+
+function stopWatch(name) {
+  const w = watches.get(name);
+  if (!w) return;
+  clearTimeout(w.id);
+  watches.delete(name);
+}
+
+document.addEventListener('visibilitychange', () => {
+  watches.forEach((w, name) => armWatch(name, w));
+});
+
+function ensureYouTubeApi() {
+  if (ytApi !== 'idle') return;
+  if (window.YT && typeof window.YT.Player === 'function') {
+    ytApi = 'ready';
+    return;
+  }
+  ytApi = 'loading';
+  const previous = window.onYouTubeIframeAPIReady;
+  window.onYouTubeIframeAPIReady = () => {
+    if (typeof previous === 'function') previous();
+    if (ytApi !== 'loading') return;
+    clearTimeout(apiTimer);
+    ytApi = 'ready';
+    attachPlayer();
+  };
+  const script = document.createElement('script');
+  script.src = 'https://www.youtube.com/iframe_api';
+  script.async = true;
+  script.onerror = youTubeApiFailed;
+  document.head.appendChild(script);
+  apiTimer = setTimeout(youTubeApiFailed, API_LOAD_TIMEOUT_MS);
+}
+
+function youTubeApiFailed() {
+  if (ytApi !== 'loading') return;
+  clearTimeout(apiTimer);
+  ytApi = 'failed';
+  clearMonitors();
+  render();
+}
+
+function clearMonitors() {
+  ['play', 'grace', 'buffer'].forEach(stopWatch);
+}
+
+function teardownPlayer() {
+  clearMonitors();
+  loadToken++;
+  readySeen = false;
+  hasPlayed = false;
+  judgeUnknown = false;
+  autoplaySuspected = false;
+  if (player) {
+    try { player.destroy(); } catch (e) { /* 破棄に失敗しても iframe は下で取り除く */ }
+  }
+  player = null;
+  currentIframe = null;
+  stageEl.querySelectorAll('iframe').forEach(f => f.remove());
+}
+
+function attachPlayer() {
+  if (ytApi !== 'ready' || !currentIframe || player) return;
+  const token = loadToken;
+  // コールバックの中で破棄・切り替えをしないよう、いったん抜けてから token を確かめて処理する
+  const later = fn => setTimeout(() => { if (token === loadToken) fn(); }, 0);
+  try {
+    player = new window.YT.Player(currentIframe, {
+      events: {
+        onReady: e => {
+          if (token !== loadToken) return;
+          readySeen = true;
+          try { e.target.mute(); e.target.playVideo(); } catch (err) { /* 自動再生は URL 側でも指定済み */ }
+        },
+        onStateChange: e => later(() => onPlayerState(token, e.data)),
+        onError: e => later(() => strongFailure(token, 'error', e.data))
+      }
+    });
+  } catch (e) {
+    player = null; // プレーヤーを作れなければ通常の埋め込みのまま（判定なし）
+    return;
+  }
+  startWatch('play', PLAY_TIMEOUT_MS, () => onPlayTimeout(token));
+}
+
+function onPlayerState(token, s) {
+  if (token !== loadToken) return;
+  if (s === PS.PLAYING) {
+    hasPlayed = true;
+    autoplaySuspected = false;
+    weakSkipStreak = 0;
+    clearMonitors();
+    // 再生できたので利用不可の記録を消す
+    if (unavailable.delete(sceneKey(SCENES[state.sceneIndex]))) render();
+  } else if (s === PS.ENDED) {
+    strongFailure(token, 'ended');
+  } else if (s === PS.BUFFERING) {
+    // 再生開始前の待ちは play / grace で見るので、ここは再生開始後だけ
+    if (hasPlayed && !watches.has('buffer')) {
+      startWatch('buffer', BUFFER_TIMEOUT_MS, () => weakFailure(token, 'buffering'));
+    }
+  } else {
+    stopWatch('buffer');
+  }
+}
+
+// 20 秒たっても再生が始まらない：onReady が来ていなければ判定不能。来ていれば 1 回だけ再生を促して猶予を足す
+function onPlayTimeout(token) {
+  if (token !== loadToken) return;
+  if (!readySeen) {
+    judgeUnknown = true;
+    render();
+    return;
+  }
+  try { player.playVideo(); } catch (e) { /* 次の確認で判断する */ }
+  startWatch('grace', PLAY_GRACE_MS, () => onGraceTimeout(token));
+}
+
+function onGraceTimeout(token) {
+  if (token !== loadToken) return;
+  let s;
+  try { s = player.getPlayerState(); } catch (e) { s = undefined; }
+  if (s === PS.PLAYING) return;
+  if (s === PS.UNSTARTED || s === PS.CUED) {
+    // 一度も動き出していない：自動再生のブロックが疑わしいので飛ばさない
+    autoplaySuspected = true;
+    showToast(AUTOPLAY_MESSAGE);
+    render();
+    return;
+  }
+  weakFailure(token, 'timeout');
+}
+
+// クリック・キー操作のあとなら再生できることがあるので、ブロックが疑わしいときは再生を促す
+function nudgePlayback() {
+  if (!autoplaySuspected || !player) return;
+  autoplaySuspected = false;
+  try { player.mute(); player.playVideo(); } catch (e) { /* 再生できなければそのまま */ }
+  render();
+}
+document.addEventListener('pointerdown', nudgePlayback);
+document.addEventListener('keydown', nudgePlayback);
+
+function isUnavailable(key) {
+  const t = unavailable.get(key);
+  if (t === undefined) return false;
+  if (Date.now() - t >= RETRY_AFTER_MS) {
+    unavailable.delete(key); // 30 分たったら再挑戦できるようにする
+    return false;
+  }
+  return true;
+}
+
+// 自動で飛ばす先：絞り込み後の一覧の順で、今の景色の次から。ダミーと利用不可は飛ばす
+function findNextPlayable() {
+  const list = visibleIndices();
+  const pos = list.indexOf(state.sceneIndex);
+  for (let k = 1; k <= list.length; k++) {
+    const idx = list[(pos + k + list.length) % list.length];
+    if (idx === state.sceneIndex) continue;
+    const scene = SCENES[idx];
+    if (isPlayableScene(scene) && !isUnavailable(sceneKey(scene))) return idx;
+  }
+  return null;
+}
+
+function failReason(scene, reason, code) {
+  if (reason === 'ended') return scene.name + 'の配信が終了したため';
+  if (reason === 'timeout') return scene.name + 'の配信が始まらないため';
+  if (reason === 'buffering') return scene.name + 'の映像が止まったため';
+  return scene.name + 'を再生できないため' + (code !== undefined ? '（エラー ' + code + '）' : '');
+}
+
+// 決定的な失敗（onError・ENDED）
+function strongFailure(token, reason, code) {
+  if (token !== loadToken) return;
+  clearMonitors();
+  if (!state.autoSkip) return; // OFF のときはその景色のまま
+  skipFrom(reason, code);
+}
+
+// 弱い証拠（再生が始まらない・長いバッファリング）。PLAYING を見ないままの連続スキップは 3 回まで
+function weakFailure(token, reason) {
+  if (token !== loadToken) return;
+  const playedHere = hasPlayed;
+  clearMonitors();
+  if (!state.autoSkip) return;
+  if (!playedHere) {
+    if (weakSkipStreak >= MAX_WEAK_SKIPS) {
+      autoplaySuspected = true;
+      showToast(AUTOPLAY_MESSAGE);
+      render();
+      return;
+    }
+    weakSkipStreak++;
+  }
+  skipFrom(reason);
+}
+
+function skipFrom(reason, code) {
+  const scene = SCENES[state.sceneIndex];
+  unavailable.set(sceneKey(scene), Date.now());
+  const next = findNextPlayable();
+  if (next === null) {
+    stopNoPlayable(scene, reason, code);
+    return;
+  }
+  showToast(failReason(scene, reason, code) + '、次の景色（' + SCENES[next].name + '）に切り替えました');
+  setScene(next, true); // 10 分タイマーもここでリセットされる（タイマーは常に 1 本）
+}
+
+// 全部利用不可：切り替えをやめてグラデーション背景に戻し、5 分後に再挑戦する
+function stopNoPlayable(scene, reason, code) {
+  teardownPlayer();
+  noPlayable = true;
+  showToast(failReason(scene, reason, code) + '、ほかに再生できる景色がないため切り替えを停止しました');
+  scheduleRetry();
+  render();
+}
+
+// 表示対象の景色のうち、利用不可で待っているものがあるときだけタイマーを張る
+function scheduleRetry() {
+  clearTimeout(retryTimer);
+  retryTimer = null;
+  unavailable.forEach((t, key) => { if (Date.now() - t >= RETRY_AFTER_MS) unavailable.delete(key); });
+  const waiting = visibleIndices().filter(i => isPlayableScene(SCENES[i]) && unavailable.has(sceneKey(SCENES[i])));
+  if (!waiting.length) return;
+  retryTimer = setTimeout(retryPlayback, STOP_RETRY_MS);
+}
+
+function retryPlayback() {
+  retryTimer = null;
+  if (!noPlayable) return;
+  const current = SCENES[state.sceneIndex];
+  const list = visibleIndices().filter(i => isPlayableScene(SCENES[i]));
+  if (!list.length) return;
+  // 今の景色を優先し、なければ一覧の次。どれも利用不可なら印を外して読み込み直す
+  let target = list.includes(state.sceneIndex) && !isUnavailable(sceneKey(current)) ? state.sceneIndex : findNextPlayable();
+  if (target === null) target = list.includes(state.sceneIndex) ? state.sceneIndex : list[0];
+  unavailable.delete(sceneKey(SCENES[target]));
+  if (target === state.sceneIndex) {
+    currentKey = null; // 同じ景色でも読み込み直す
+    render();
+  } else {
+    setScene(target, true);
+  }
+}
+
+// 停止中に絞り込みが変わったら、すぐに再生できる景色を探す
+function resumeIfStopped() {
+  if (!noPlayable) return;
+  const next = findNextPlayable();
+  if (next !== null) setScene(next, true);
+  else scheduleRetry();
+}
+
+function showToast(text) {
+  const toast = $('toast');
+  toast.textContent = text;
+  toast.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { toast.hidden = true; }, TOAST_MS);
+}
+
+function renderVideo(scene) {
+  const key = sceneKey(scene);
+  if (key === currentKey) return;
+  currentKey = key;
+  // 景色が変わったら、停止表示と再試行予約を解除する
+  noPlayable = false;
+  clearTimeout(retryTimer);
+  retryTimer = null;
+  // src の差し替えは履歴に積まれるブラウザがあるため、iframe ごと作り直す
+  teardownPlayer();
+  const src = embedSource(scene);
+  if (!src) return; // ダミー ID は読み込まず、グラデーション背景のみ（判定の対象外）
+  const iframe = document.createElement('iframe');
+  iframe.src = embedUrl(src);
+  iframe.title = scene.name + ' のライブ映像';
+  iframe.setAttribute('allow', 'autoplay; encrypted-media; picture-in-picture');
+  iframe.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin');
+  iframe.setAttribute('tabindex', '-1');
+  stageEl.appendChild(iframe);
+  currentIframe = iframe;
+  ensureYouTubeApi();
+  attachPlayer();
+}
+
+function visibleIndices() {
+  const result = [];
+  SCENES.forEach((s, i) => {
+    if (state.category !== 'all' && s.category !== state.category) return;
+    if (state.favOnly && !state.favorites.includes(sceneKey(s))) return;
+    result.push(i);
+  });
+  return result;
+}
+
+let autoTimer = null;
+
+function resetAutoTimer() {
+  clearTimeout(autoTimer);
+  autoTimer = null;
+  if (state.autoRotate) {
+    autoTimer = setTimeout(() => {
+      step(1, false);
+      resetAutoTimer();
+    }, AUTO_INTERVAL_MS);
+  }
+}
+
+function setScene(index, manual) {
+  // 停止中に同じ景色を手動で選び直したら、読み込み直して再挑戦する
+  if (manual && noPlayable && index === state.sceneIndex) currentKey = null;
+  update({ sceneIndex: index });
+  if (manual) resetAutoTimer();
+}
+
+// 一覧（カテゴリ・お気に入りの絞り込み後）の順に前後へ移動する。
+// 自動（10 分ごと）のときは利用不可の景色を飛ばす。手動ならどれでも選べる
+function step(dir, manual) {
+  let list = visibleIndices();
+  if (!manual) list = list.filter(i => i === state.sceneIndex || !isUnavailable(sceneKey(SCENES[i])));
+  if (!list.length) return;
+  const pos = list.indexOf(state.sceneIndex);
+  const next = pos < 0
+    ? list[dir > 0 ? 0 : list.length - 1]
+    : list[(pos + dir + list.length) % list.length];
+  setScene(next, manual);
+}
+
+function toggleFavorite(key) {
+  const favs = state.favorites.includes(key)
+    ? state.favorites.filter(id => id !== key)
+    : state.favorites.concat(key);
+  update({ favorites: favs });
+}
+
+// ===== 6. 設定パネル =====
+
+const syncers = []; // render() のたびに state をコントロールへ反映する関数群
+
+function update(patch) {
+  Object.assign(state, patch);
+  if ('autoSkip' in patch && !state.autoSkip) {
+    // OFF にしたら停止表示と再挑戦の予約を解除し、今の景色を読み込み直す
+    noPlayable = false;
+    clearTimeout(retryTimer);
+    retryTimer = null;
+    weakSkipStreak = 0;
+    currentKey = null;
+  }
+  save();
+  render();
+  if ('autoRotate' in patch) resetAutoTimer();
+  if ('category' in patch || 'favOnly' in patch || 'favorites' in patch) resumeIfStopped();
+}
+
+function el(tag, attrs, children) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === 'class') node.className = v;
+    else if (k === 'text') node.textContent = v;
+    else if (k.startsWith('on')) node.addEventListener(k.slice(2), v);
+    else node.setAttribute(k, v);
+  }
+  for (const c of children || []) if (c) node.append(c);
+  return node;
+}
+
+function field(id, label, control) {
+  return el('div', { class: 'field' }, [el('label', { for: id, text: label }), control]);
+}
+
+function makeSelect(key, label, options, numeric) {
+  const id = 'ctl-' + key;
+  const select = el('select', { id: id });
+  options.forEach(([value, text]) => select.append(el('option', { value: String(value), text: text })));
+  select.addEventListener('change', () => update({ [key]: numeric ? Number(select.value) : select.value }));
+  syncers.push(() => { select.value = String(state[key]); });
+  return field(id, label, select);
+}
+
+function makeToggle(key, label) {
+  const id = 'ctl-' + key;
+  const input = el('input', { id: id, type: 'checkbox', role: 'switch' });
+  input.addEventListener('change', () => update({ [key]: input.checked }));
+  syncers.push(() => {
+    input.checked = state[key];
+    input.setAttribute('aria-checked', String(state[key]));
+  });
+  return field(id, label, input);
+}
+
+function makeSlider(key, label) {
+  const id = 'ctl-' + key;
+  const input = el('input', { id: id, type: 'range', min: '50', max: '200', step: '10' });
+  const out = el('output', { for: id });
+  input.addEventListener('input', () => update({ [key]: Number(input.value) }));
+  syncers.push(() => {
+    input.value = String(state[key]);
+    out.textContent = state[key] + '%';
+    input.setAttribute('aria-valuetext', state[key] + '%');
+  });
+  return field(id, label, el('div', { class: 'range-wrap' }, [input, out]));
+}
+
+function makeColor(key, label) {
+  const id = 'ctl-' + key;
+  const input = el('input', { id: id, type: 'color' });
+  input.addEventListener('input', () => update({ [key]: input.value }));
+  syncers.push(() => { input.value = state[key]; });
+  return field(id, label, input);
+}
+
+function makeHint(getText) {
+  const p = el('p', { class: 'hint' });
+  syncers.push(() => {
+    const text = getText();
+    p.textContent = text;
+    p.hidden = !text;
+  });
+  return p;
+}
+
+function section(title, children) {
+  return el('section', { 'aria-label': title }, [el('h2', { text: title })].concat(children));
+}
+
+const STYLE_HINTS = {
+  5: '主時計（プリセットで選んだ側）を大きく上に、もう一方を小さく下に表示します。両方表示のとき、副時計はスライダー値の半分の大きさで表示されます。',
+  6: '主時計（プリセットで選んだ側）をアナログで、もう一方を小さなデジタルで表示します。片方だけのときは残った時刻をアナログにします。',
+  8: '配置の設定にかかわらず、画面下端に幅いっぱいで表示します。',
+  9: '選んだ隅に張り付きます。「下中央」を選んだ場合は左下に表示します。',
+  10: 'フォントの設定にかかわらず等幅フォントで表示します。'
+};
+const POSITION_HINTS = {
+  8: 'ボトムバーは配置にかかわらず画面下端に表示されます。',
+  9: 'コーナータブで「下中央」を選ぶと左下に表示されます。'
+};
+
+const PRESETS = [
+  { label: '現地を大きく', patch: { primary: 'local', localScale: 160, jstScale: 80 } },
+  { label: '日本を大きく', patch: { primary: 'jst', jstScale: 160, localScale: 80 } },
+  { label: '同じ大きさ', patch: { localScale: 100, jstScale: 100 } }
+];
+
+let noticeForced = false;
+const sceneRows = [];
+
+function buildSceneList() {
+  const list = el('ul', { class: 'scene-list', 'aria-label': '景色の一覧' });
+  SCENES.forEach((scene, i) => {
+    const pick = el('button', {
+      class: 'btn scene-pick', type: 'button',
+      'aria-label': scene.name + '（' + scene.category + '）に切り替え',
+      onclick: () => setScene(i, true)
+    }, [
+      el('span', { text: scene.name }),
+      el('small', {}, [
+        document.createTextNode(scene.category + ' ・ ' + scene.timeZone + ' '),
+        el('span', { class: 'unavailable', text: '（利用不可）' })
+      ])
+    ]);
+    const fav = el('button', { class: 'btn fav-btn', type: 'button', onclick: () => toggleFavorite(sceneKey(scene)) });
+    const row = el('li', {}, [pick, fav]);
+    sceneRows.push({ row: row, pick: pick, fav: fav, badge: pick.querySelector('.unavailable'), index: i });
+    list.append(row);
+  });
+  const empty = el('p', { class: 'hint', text: '該当する景色がありません（カテゴリやお気に入りの絞り込みを確認してください）。' });
+  syncers.push(() => {
+    const visible = visibleIndices();
+    sceneRows.forEach(r => {
+      const scene = SCENES[r.index];
+      const isFav = state.favorites.includes(sceneKey(scene));
+      r.badge.hidden = !isUnavailable(sceneKey(scene));
+      r.row.hidden = !visible.includes(r.index);
+      r.pick.setAttribute('aria-current', String(r.index === state.sceneIndex));
+      r.fav.textContent = isFav ? '★' : '☆';
+      r.fav.setAttribute('aria-pressed', String(isFav));
+      r.fav.setAttribute('aria-label', scene.name + (isFav ? ' をお気に入りから外す' : ' をお気に入りに追加'));
+    });
+    empty.hidden = visible.length > 0;
+  });
+  return [list, empty];
+}
+
+function buildPanel() {
+  const body = $('panel-body');
+
+  const sceneStatus = el('p', { class: 'status', 'aria-live': 'polite' });
+  syncers.push(() => {
+    const scene = SCENES[state.sceneIndex];
+    let text = '表示中：' + scene.name + '（' + scene.timeZone + '）';
+    if (!isPlayableScene(scene)) text += ' ／ ダミー ID または ID 未設定のため映像はありません（SCENES の videoId を差し替えてください）';
+    if (noPlayable) text += ' ／ 再生できる景色がないため、自動切替を停止しています（30 分後に再試行します）';
+    if (ytApi === 'failed') text += ' ／ 再生状態を取得できないため、配信終了の自動切替は働きません';
+    if (judgeUnknown) text += ' ／ プレーヤーの応答がなく再生状態を判定できないため、自動切替を見送っています';
+    if (autoplaySuspected) text += ' ／ 自動再生がブロックされている可能性があります（画面をクリックすると再生を試みます）';
+    if (localFormatter && localFormatter.fallback) text += ' ／ タイムゾーンが不正なため日本時間で表示しています';
+    sceneStatus.textContent = text;
+  });
+
+  const presetStatus = el('p', { class: 'status' });
+  syncers.push(() => {
+    presetStatus.textContent = '主時計：' + (state.primary === 'local' ? '現地' : '日本') + '（大＋小スタック・アナログで主として扱います）';
+  });
+
+  body.append(
+    section('景色', [
+      sceneStatus,
+      makeSelect('category', 'カテゴリ', [['all', 'すべて']].concat(CATEGORIES.map(c => [c, c]))),
+      makeToggle('favOnly', 'お気に入りだけを表示・巡回'),
+    ].concat(buildSceneList(), [
+      el('div', { class: 'btn-row' }, [
+        el('button', { class: 'btn', type: 'button', 'aria-label': '前の景色', text: '← 前の景色', onclick: () => step(-1, true) }),
+        el('button', { class: 'btn', type: 'button', 'aria-label': '次の景色', text: '次の景色 →', onclick: () => step(1, true) })
+      ]),
+      makeToggle('autoRotate', '10分ごとに自動で切り替え'),
+      el('p', { class: 'hint', text: '自動切替は一覧（絞り込み後）の順に進みます。手動で切り替えると 10 分のカウントをやり直します。' }),
+      makeToggle('autoSkip', '配信が終わったら自動で切り替える'),
+      el('p', { class: 'hint', text: '配信終了・再生エラーのとき、または再生が始まらない・30 秒以上止まったときに、一覧の次の景色へ進みます。再生できなかった景色は 30 分間飛ばします。自動再生がブロックされていそうなときは飛ばしません。' })
+    ])),
+    section('時計の見た目', [
+      makeSelect('clockStyle', '形', STYLE_NAMES.map((name, i) => [i + 1, (i + 1) + '. ' + name]), true),
+      makeHint(() => STYLE_HINTS[state.clockStyle] || ''),
+      makeSelect('theme', '色テーマ', THEMES),
+      makeColor('accent', 'アクセント色（アクセントテーマ用）'),
+      makeSelect('position', '配置', POSITIONS),
+      makeHint(() => POSITION_HINTS[state.clockStyle] || ''),
+      makeSelect('size', '全体サイズ', SIZES),
+      makeSelect('font', 'フォント', FONTS)
+    ]),
+    section('現地時刻・日本時間', [
+      makeToggle('showLocal', '現地時刻を表示'),
+      makeSlider('localScale', '現地時刻の大きさ'),
+      makeToggle('showJst', '日本時間を表示'),
+      makeSlider('jstScale', '日本時間の大きさ'),
+      el('div', { class: 'btn-row', role: 'group', 'aria-label': '主時計プリセット' },
+        PRESETS.map(p => el('button', { class: 'btn', type: 'button', text: p.label, onclick: () => update(Object.assign({}, p.patch)) }))),
+      presetStatus
+    ]),
+    section('表示項目', [
+      makeToggle('showSec', '秒'),
+      makeToggle('showDate', '日付'),
+      makeToggle('showDow', '曜日'),
+      makeToggle('showPlace', '場所名'),
+      makeToggle('showDiff', '時差（日本との差）'),
+      makeToggle('showWeather', '天気（準備中のプレースホルダ）')
+    ]),
+    section('その他', [
+      el('div', { class: 'btn-row' }, [
+        el('button', {
+          class: 'btn', type: 'button', text: '映像が再生されない場合の案内を表示',
+          onclick: () => { noticeForced = true; update({ fileNoticeDismissed: false }); }
+        }),
+        el('button', { class: 'btn btn-danger', type: 'button', text: '設定を初期化', onclick: resetSettings })
+      ]),
+      el('p', { class: 'hint', text: 'キー操作：← → で景色を切り替え／S で設定を開閉／Esc で設定を閉じる' })
+    ])
+  );
+}
+
+function resetSettings() {
+  if (!window.confirm('すべての設定を初期化しますか？（お気に入りも消えます）')) return;
+  state = sanitize({});
+  noticeForced = false;
+  save();
+  render();
+  resetAutoTimer();
+}
+
+const panelEl = $('panel');
+const settingsBtn = $('settings-btn');
+
+function openPanel() {
+  panelEl.hidden = false;
+  settingsBtn.setAttribute('aria-expanded', 'true');
+  $('panel-close').focus();
+}
+
+function closePanel() {
+  if (panelEl.hidden) return;
+  panelEl.hidden = true;
+  settingsBtn.setAttribute('aria-expanded', 'false');
+  settingsBtn.focus();
+}
+
+settingsBtn.addEventListener('click', () => (panelEl.hidden ? openPanel() : closePanel()));
+$('panel-close').addEventListener('click', closePanel);
+$('notice-close').addEventListener('click', () => {
+  noticeForced = false;
+  update({ fileNoticeDismissed: true });
+});
+
+// ===== render：state から見た目を反映するだけ =====
+
+function render() {
+  const scene = SCENES[state.sceneIndex];
+
+  // 景色
+  const rgb = hexToRgb(scene.themeColor);
+  const light = rgb.map(c => Math.round(c + (255 - c) * 0.7));
+  const rootStyle = document.documentElement.style;
+  rootStyle.setProperty('--scene-rgb', rgb.join(', '));
+  rootStyle.setProperty('--scene-light-rgb', light.join(', '));
+  rootStyle.setProperty('--accent', state.accent);
+  renderVideo(scene);
+  $('stage-msg').hidden = !noPlayable;
+  if (scene.timeZone !== localTz) {
+    localFormatter = createFormatter(scene.timeZone);
+    localTz = scene.timeZone;
+  }
+
+  // 時計
+  const style = state.clockStyle;
+  const both = state.showLocal && state.showJst;
+  const none = !state.showLocal && !state.showJst;
+  // 両方表示ならプリセットで選んだ主、片方なら残った側を主として扱う
+  const primary = both ? state.primary : (state.showLocal ? 'local' : 'jst');
+  const position = (style === 9 && state.position === 'bc') ? 'bl' : state.position;
+  clockEl.className = [
+    'clock', 'clock-style-' + style, 'theme-' + state.theme, 'pos-' + position,
+    'size-' + state.size, 'font-' + state.font,
+    none ? 'is-empty' : (both ? 'has-both' : 'has-single'),
+    state.showSec ? '' : 'no-sec',
+    state.showDate ? '' : 'no-date',
+    state.showDow ? '' : 'no-dow',
+    state.showPlace ? '' : 'no-place',
+    state.showDiff ? '' : 'no-diff',
+    (state.showDate || state.showDow) ? '' : 'no-meta'
+  ].filter(Boolean).join(' ');
+
+  [['local', 'showLocal', 'localScale'], ['jst', 'showJst', 'jstScale']].forEach(([key, showKey, scaleKey]) => {
+    const root = items[key].root;
+    root.hidden = !state[showKey];
+    root.style.setProperty('--clock-item-scale', String(state[scaleKey] / 100));
+    root.classList.toggle('is-primary', key === primary);
+    root.classList.toggle('is-analog', style === 6 && key === primary);
+  });
+  // スタックとアナログは主を先頭に。それ以外は 現地 → 日本 の順
+  const first = ((style === 5 || style === 6) && primary === 'jst') ? items.jst.root : items.local.root;
+  const second = first === items.local.root ? items.jst.root : items.local.root;
+  if (clockEl.firstElementChild !== first) clockEl.insertBefore(first, clockEl.firstElementChild);
+  if (first.nextElementSibling !== second) clockEl.insertBefore(second, first.nextElementSibling);
+
+  items.local.place.textContent = scene.name;
+  weatherEl.hidden = !state.showWeather;
+
+  // 案内・パネル
+  const isFile = window.location.protocol === 'file:';
+  $('notice').hidden = state.fileNoticeDismissed || !(isFile || noticeForced);
+  // 時計が右側にあるときは、パネルと案内を反対側に出して時計を隠さない
+  const clockOnRight = style !== 8 && (position === 'tr' || position === 'br');
+  $('notice').classList.toggle('side-left', clockOnRight && position === 'tr');
+  panelEl.classList.toggle('side-left', clockOnRight);
+  // ボトムバーと重ならないよう、パネルの下端をバーの高さぶん上げる
+  panelEl.style.bottom = (style === 8 && !none) ? (clockEl.offsetHeight + 12) + 'px' : '';
+  syncers.forEach(fn => fn());
+
+  tick();
+}
+
+// ===== 7. キーボード操作 =====
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    if (!panelEl.hidden) {
+      e.preventDefault();
+      closePanel();
+    }
+    return;
+  }
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  // 入力欄・スライダー・セレクトでは矢印キーをそれらの操作に使わせる
+  const t = e.target;
+  // チェックボックス・カラー・ボタン等は矢印キーを使わないので、景色切替を効かせる
+  const ARROW_FREE_INPUTS = ['checkbox', 'radio', 'color', 'button', 'submit', 'reset'];
+  const editing = t && t.closest && (
+    t.closest('select, textarea, [contenteditable=""], [contenteditable="true"]') ||
+    (t.tagName === 'INPUT' && !ARROW_FREE_INPUTS.includes(t.type))
+  );
+  if (editing) return;
+  if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+    e.preventDefault();
+    step(e.key === 'ArrowRight' ? 1 : -1, true);
+  } else if (e.key === 's' || e.key === 'S') {
+    e.preventDefault();
+    if (panelEl.hidden) openPanel(); else closePanel();
+  }
+});
+
+// ===== 起動 =====
+
+buildPanel();
+render();
+scheduleTick();
+resetAutoTimer();
+window.addEventListener('resize', render); // ボトムバーの高さに合わせたパネル位置を追従させる
+</script>
+</body>
+</html>
